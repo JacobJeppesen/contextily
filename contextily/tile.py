@@ -37,7 +37,8 @@ __all__ = [
 USER_AGENT = "contextily-" + uuid.uuid4().hex
 
 tmpdir = tempfile.mkdtemp()
-memory = _Memory(tmpdir, verbose=0)
+cache_bytes_limit = 1024 * 1024 * 1024  # 1 GB
+memory = _Memory(tmpdir, verbose=0, bytes_limit=cache_bytes_limit)
 
 
 def set_cache_dir(path):
@@ -55,6 +56,10 @@ def set_cache_dir(path):
         Path to the cache directory.
     """
     memory.store_backend.location = path
+
+
+def _check_cache_size():
+    memory.reduce_size()
 
 
 def _clear_cache():
@@ -235,6 +240,8 @@ def bounds2img(
         Parallel(n_jobs=num_parallel_tile_downloads, prefer="threads")(
             delayed(_fetch_tile)(tile_url, wait, max_retries) for tile_url in tile_urls)
     merged, extent = _merge_tiles(tiles, arrays)
+    # ensure the cache size is not exceeding its limit after fetching the tiles
+    _check_cache_size()
     # lon/lat extent --> Spheric Mercator
     west, south, east, north = extent
     left, bottom = mt.xy(west, south)
