@@ -81,6 +81,7 @@ def bounds2raster(
     wait=0,
     max_retries=2,
     num_parallel_tile_downloads=16,
+    cache_tiles=True,
 ):
     """
     Take bounding box and zoom, and write tiles into a raster file in
@@ -123,6 +124,9 @@ def bounds2raster(
     num_parallel_tile_downloads: int
         [Optional. Default: 16]
         number of parallel tile downloads.
+    cache_tiles: bool
+        [Optional. Default: True]
+        if True, downloaded tiles will be cached in memory.
 
     Returns
     -------
@@ -137,7 +141,7 @@ def bounds2raster(
         e, n = _sm2ll(e, n)
     # Download
     Z, ext = bounds2img(w, s, e, n, zoom=zoom, source=source, ll=True,
-                        num_parallel_tile_downloads=num_parallel_tile_downloads)
+                        num_parallel_tile_downloads=num_parallel_tile_downloads, cache_tiles=cache_tiles)
 
     # Write
     # ---
@@ -167,7 +171,8 @@ def bounds2raster(
 
 
 def bounds2img(
-    w, s, e, n, zoom="auto", source=None, ll=False, wait=0, max_retries=2, num_parallel_tile_downloads=16
+    w, s, e, n, zoom="auto", source=None, ll=False, wait=0, max_retries=2, num_parallel_tile_downloads=16,
+    cache_tiles=True
 ):
     """
     Take bounding box and zoom and return an image with all the tiles
@@ -208,6 +213,9 @@ def bounds2img(
     num_parallel_tile_downloads: int
         [Optional. Default: 16]
         number of parallel tile downloads.
+    cache_tiles: bool
+        [Optional. Default: True]
+        if True, downloaded tiles will be cached in memory.
 
     Returns
     -------
@@ -236,9 +244,14 @@ def bounds2img(
         )
     tiles = list(mt.tiles(w, s, e, n, [zoom]))
     tile_urls = [provider.build_url(x=tile.x, y=tile.y, z=tile.z) for tile in tiles]
-    arrays = \
-        Parallel(n_jobs=num_parallel_tile_downloads, prefer="threads")(
-            delayed(_fetch_tile)(tile_url, wait, max_retries) for tile_url in tile_urls)
+    if cache_tiles:
+        arrays = \
+            Parallel(n_jobs=num_parallel_tile_downloads)(
+                delayed(_fetch_tile_cached)(tile_url, wait, max_retries) for tile_url in tile_urls)
+    else:
+        arrays = \
+            Parallel(n_jobs=num_parallel_tile_downloads, prefer="threads")(
+                delayed(_fetch_tile)(tile_url, wait, max_retries) for tile_url in tile_urls)
     merged, extent = _merge_tiles(tiles, arrays)
     # ensure the cache size is not exceeding its limit after fetching the tiles
     _check_cache_size()
@@ -267,6 +280,10 @@ def _process_source(source):
 
 
 @memory.cache
+def _fetch_tile_cached(tile_url, wait, max_retries):
+    return _fetch_tile(tile_url, wait, max_retries)
+
+
 def _fetch_tile(tile_url, wait, max_retries):
     request = _retryer(tile_url, wait, max_retries)
     with io.BytesIO(request.content) as image_stream:
