@@ -76,6 +76,7 @@ def bounds2raster(
     wait=0,
     max_retries=2,
     n_connections=1,
+    disable_tile_cache=False,
 ):
     """
     Take bounding box and zoom, and write tiles into a raster file in
@@ -118,6 +119,9 @@ def bounds2raster(
     n_connections: int
         [Optional. Default: 1]
         number of connections for downloading tiles in parallel.
+    disable_tile_cache: bool
+        [Optional. Default: False]
+        if True, the memory caching of the downloaded tiles will be disabled.
 
     Returns
     -------
@@ -132,7 +136,7 @@ def bounds2raster(
         e, n = _sm2ll(e, n)
     # Download
     Z, ext = bounds2img(w, s, e, n, zoom=zoom, source=source, ll=True,
-                        n_connections=n_connections)
+                        n_connections=n_connections, disable_tile_cache=disable_tile_cache)
 
     # Write
     # ---
@@ -162,7 +166,7 @@ def bounds2raster(
 
 
 def bounds2img(
-    w, s, e, n, zoom="auto", source=None, ll=False, wait=0, max_retries=2, n_connections=1
+    w, s, e, n, zoom="auto", source=None, ll=False, wait=0, max_retries=2, n_connections=1, disable_tile_cache=False
 ):
     """
     Take bounding box and zoom and return an image with all the tiles
@@ -203,6 +207,9 @@ def bounds2img(
     n_connections: int
         [Optional. Default: 1]
         number of connections for downloading tiles in parallel.
+    disable_tile_cache: bool
+        [Optional. Default: False]
+        if True, the memory caching of the downloaded tiles will be disabled.
 
     Returns
     -------
@@ -235,9 +242,10 @@ def bounds2img(
     # Use threads for a single connection to avoid the overhead of spawning a process. For multiple connections, use
     # processes, as threads lead to memory issues when used in combination with the joblib memory caching (used for
     # the _fetch_tile() function).
-    preferred_backend = "threads" if n_connections == 1 else "processes"
+    preferred_backend = "threads" if (n_connections == 1 or disable_tile_cache) else "processes"
+    fetch_tile_fn = _fetch_tile if disable_tile_cache else memory.cache(_fetch_tile)
     arrays = Parallel(n_jobs=n_connections, prefer=preferred_backend)(
-        delayed(_fetch_tile)(tile_url, wait, max_retries) for tile_url in tile_urls)
+        delayed(fetch_tile_fn)(tile_url, wait, max_retries) for tile_url in tile_urls)
     # merge downloaded tiles
     merged, extent = _merge_tiles(tiles, arrays)
     # lon/lat extent --> Spheric Mercator
@@ -264,7 +272,6 @@ def _process_source(source):
     return provider
 
 
-@memory.cache
 def _fetch_tile(tile_url, wait, max_retries):
     request = _retryer(tile_url, wait, max_retries)
     with io.BytesIO(request.content) as image_stream:
